@@ -547,7 +547,7 @@ local dap = Proto("debug", "Debug Adapter Protocol")
 dap.fields.request_frame = ProtoField.new("Request Frame", "debug.request_frame", ftypes.FRAMENUM, frametype.REQUEST)
 dap.fields.response_frame = ProtoField.new("Response Frame", "debug.response_frame", ftypes.FRAMENUM, frametype.RESPONSE)
 
-dap.fields.json = ProtoField.new("JSON", "debug.json", ftypes.STRING)
+dap.fields.json = ProtoField.new("JSON", "debug.json", ftypes.PROTOCOL) -- PROTOCOL is to have the field expandable
 
 dap.fields.seq = ProtoField.new("Sequence Number", "debug.seq", ftypes.UINT32, nil, base.DEC)
 dap.fields.type = ProtoField.new("Type", "debug.type", ftypes.STRING)
@@ -570,6 +570,68 @@ local CONTENT_PATTERN = "(Content%-Length: (%d+)\r\n\r\n)"
 
 local TYPE_REQUEST = 'request'
 local TYPE_RESPONSE = 'response'
+
+local function format_json_lines(json)
+    local lines = {}
+    local indent = 0
+    local line = ''
+    local in_string = false
+    local escaped = false
+
+    local function indentation()
+        return string.rep('  ', indent)
+    end
+
+    local function push_line()
+        lines[#lines + 1] = line
+        line = indentation()
+    end
+
+    for i = 1, #json do
+        local char = json:sub(i, i)
+
+        if in_string then
+            line = line .. char
+
+            if escaped then
+                escaped = false
+            elseif char == '\\' then
+                escaped = true
+            elseif char == '"' then
+                in_string = false
+            end
+        elseif char == '"' then
+            in_string = true
+            line = line .. char
+        elseif char == '{' or char == '[' then
+            line = line .. char
+            indent = indent + 1
+            push_line()
+        elseif char == '}' or char == ']' then
+            indent = indent - 1
+
+            if line:match('^%s*$') then
+                line = indentation() .. char
+            else
+                push_line()
+                line = indentation() .. char
+            end
+        elseif char == ',' then
+            line = line .. char
+            push_line()
+        elseif char == ':' then
+            line = line .. ': '
+        elseif not char:match('%s') then
+            line = line .. char
+        end
+    end
+
+    if not line:match('^%s*$') then
+        lines[#lines + 1] = line
+    end
+
+    return lines
+end
 
 local SEQUENCE_FRAMES = {
     [TYPE_REQUEST] = {},
@@ -654,6 +716,15 @@ local TYPE_PARSERS = {
     end,
 }
 
+
+local function update_columns(content, pinfo)
+    if content.type == TYPE_REQUEST and content.command then
+        pinfo.cols.info:append(', ' .. 'DAP request: ' .. content.command)
+    elseif content.type == TYPE_RESPONSE and content.command then
+        pinfo.cols.info:append(', ' .. 'DAP response: ' .. content.command)
+    end
+end
+
 local function dissect(buffer, pinfo, tree)
     local offset = pinfo.desegment_offset or 0
 
@@ -696,7 +767,13 @@ local function dissect(buffer, pinfo, tree)
             parser(content, pdu_tree, pinfo.src_port, pinfo.dst_port, pinfo.number)
         end
 
-        pdu_tree:add(dap.fields.json, json_buffer, json_string)
+        pinfo.cols.protocol:set('DAP')
+        update_columns(content, pinfo)
+        
+        local json_tree = pdu_tree:add(dap.fields.json, json_buffer)
+        for _, json_line in ipairs(format_json_lines(json_string)) do
+            json_tree:add(json_buffer, json_line)
+        end
 
         offset = next_pdu
     end
