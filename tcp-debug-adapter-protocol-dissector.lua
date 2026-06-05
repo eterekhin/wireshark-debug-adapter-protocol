@@ -570,6 +570,7 @@ local CONTENT_PATTERN = "(Content%-Length: (%d+)\r\n\r\n)"
 
 local TYPE_REQUEST = 'request'
 local TYPE_RESPONSE = 'response'
+local TYPE_EVENT = 'event'
 
 local function format_json_lines(json)
     local lines = {}
@@ -722,6 +723,8 @@ local function update_columns(content, pinfo)
         pinfo.cols.info:append(', ' .. 'DAP request: ' .. content.command)
     elseif content.type == TYPE_RESPONSE and content.command then
         pinfo.cols.info:append(', ' .. 'DAP response: ' .. content.command)
+    elseif content.type == TYPE_EVENT and content.event then
+        pinfo.cols.info:append(', ' .. 'DAP event: ' .. content.event)
     end
 end
 
