@@ -730,13 +730,13 @@ local function dissect(buffer, pinfo, tree)
 
     while offset < buffer:len() do
         if buffer:len() - offset < MIN_PDU_LENGTH then
-            return
+            return false
         end
 
         local header, content_length = buffer:range(offset):string():match(CONTENT_PATTERN)
 
         if not header then
-            return
+            return false
         end
 
         local content_offset = offset + header:len()
@@ -745,7 +745,7 @@ local function dissect(buffer, pinfo, tree)
         if next_pdu > buffer:len() then
             pinfo.desegment_len = next_pdu - buffer:len()
             pinfo.desegment_offset = offset
-            return
+            return true
         end
 
         local pdu_tree = tree:add(dap, buffer:range(offset, header:len() + content_length))
@@ -754,12 +754,17 @@ local function dissect(buffer, pinfo, tree)
         local json_string = json_buffer:string()
 
         local content = lunajson.decode(json_string)
+        
+        if (content.type == nil) then
+            return false
+        end
+
+        if (content.seq == nil) then
+            return false
+        end
 
         pdu_tree:add(dap.fields.type, content.type)
-
-        if content.seq ~= nil then
-            pdu_tree:add(dap.fields.seq, content.seq)
-        end
+        pdu_tree:add(dap.fields.seq, content.seq)
 
         local parser = TYPE_PARSERS[content.type]
 
@@ -777,6 +782,7 @@ local function dissect(buffer, pinfo, tree)
 
         offset = next_pdu
     end
+    return true
 end
 
 function dap.dissector(buffer, pinfo, tree)
@@ -797,9 +803,8 @@ local function heuristic_dissector(buffer, pinfo, tree)
         return false
     end
 
-    dissect(buffer, pinfo, tree)
+    return dissect(buffer, pinfo, tree)
 
-    return true
 end
 
 dap:register_heuristic("tcp", heuristic_dissector)
